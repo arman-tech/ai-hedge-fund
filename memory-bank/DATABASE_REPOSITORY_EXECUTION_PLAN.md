@@ -47,10 +47,28 @@ Target:  Agent → API Functions → Data Service → [Cache|DB|API]
 
 **Week 3 Tasks:**
 
-1. **Day 15-16**: Create `HybridDataService` with cache-first logic
+1. **Day 15-16**: Create `HybridDataService` with L1→L2→L3 flow logic
+
+   - Enhance existing L1 cache with timestamp tracking
+   - Implement freshness checking for each layer
+   - Create cache population flow (L3→L2→L1)
+
 2. **Day 17-18**: Implement data freshness management
+
+   - TTL configuration per data type
+   - Cache invalidation strategies
+   - Background refresh for near-expiry data
+
 3. **Day 19-20**: Add comprehensive error handling and API fallback
+
+   - Database failure → skip L2, go L1→L3
+   - API failure → serve stale data with warnings
+   - Cache corruption → rebuild from available layers
+
 4. **Day 21**: Performance testing and optimization
+   - Measure cache hit ratios at each layer
+   - Optimize database queries and connection pooling
+   - Validate 80%+ API call reduction
 
 **Validation**: 80%+ API call reduction while maintaining identical results
 
@@ -68,6 +86,71 @@ Target:  Agent → API Functions → Data Service → [Cache|DB|API]
 **Validation**: Production-ready system with full observability
 
 ## 🔧 Technical Implementation
+
+### **Three-Layer Cache Flow (Detailed Implementation)**
+
+**Critical**: We must preserve and enhance the existing L1 cache, not replace it.
+
+```python
+# Detailed cache flow logic
+async def get_financial_metrics(ticker: str, end_date: str, period: str = "ttm", limit: int = 10):
+    cache_key = f"{ticker}_{period}_{end_date}_{limit}"
+
+    # L1 CHECK: In-memory cache (existing cache.py)
+    if l1_data := _memory_cache.get_financial_metrics(cache_key):
+        if is_data_fresh(l1_data, FINANCIAL_METRICS_TTL):  # 7 days
+            return l1_data
+
+    # L2 CHECK: PostgreSQL database
+    if l2_data := await _database_repo.get_financial_metrics(ticker, end_date, period, limit):
+        if is_data_fresh(l2_data, FINANCIAL_METRICS_TTL):
+            # Populate L1 cache for next request
+            _memory_cache.set_financial_metrics(cache_key, l2_data)
+            return l2_data
+
+    # L3 FETCH: Financial Datasets API (expensive)
+    l3_data = await _api_client.get_financial_metrics(ticker, end_date, period, limit)
+
+    # POPULATE CACHE HIERARCHY (data flows up)
+    await _database_repo.save_financial_metrics(l3_data)  # L2
+    _memory_cache.set_financial_metrics(cache_key, l3_data)  # L1
+
+    return l3_data
+```
+
+### **Cache Freshness Strategy by Layer**
+
+| Data Type         | L1 TTL  | L2 TTL | L3 Source    | Logic    |
+| ----------------- | ------- | ------ | ------------ | -------- |
+| Financial Metrics | Session | 7 days | Always fresh | L1→L2→L3 |
+| Price Data        | Session | 15 min | Always fresh | L1→L2→L3 |
+| Company News      | Session | 1 hour | Always fresh | L1→L2→L3 |
+| Insider Trades    | Session | 1 day  | Always fresh | L1→L2→L3 |
+| Line Items        | Session | 7 days | Always fresh | L1→L2→L3 |
+
+### **Enhanced L1 Cache Integration**
+
+```python
+# src/data/enhanced_cache.py - Extends existing cache.py
+class EnhancedCache(Cache):  # Inherits from existing Cache
+    def __init__(self):
+        super().__init__()
+        self._cache_timestamps: dict[str, datetime] = {}
+
+    def is_fresh(self, cache_key: str, ttl_seconds: int) -> bool:
+        """Check if cached data is still fresh"""
+        if cache_key not in self._cache_timestamps:
+            return False
+
+        age = datetime.now() - self._cache_timestamps[cache_key]
+        return age.total_seconds() < ttl_seconds
+
+    def set_with_timestamp(self, cache_key: str, data: any):
+        """Set data with timestamp for freshness checking"""
+        # Use existing set methods from parent class
+        # Add timestamp tracking
+        self._cache_timestamps[cache_key] = datetime.now()
+```
 
 ### Service Interface Design
 
