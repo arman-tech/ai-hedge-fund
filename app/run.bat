@@ -102,11 +102,23 @@ if not exist "..\.env" (
     echo %SUCCESS% Environment file (.env) found!
 )
 
+REM Setup database
+echo %INFO% Setting up database...
+echo %INFO% Database: SQLite (hedge_fund.db)
+echo %INFO% Location: Project root directory
+echo %INFO% Tables will be created automatically on first backend startup
+
+if exist "..\hedge_fund.db" (
+    echo %SUCCESS% Database file already exists!
+) else (
+    echo %INFO% Database will be created when backend starts for the first time
+)
+
 REM Install backend dependencies
 echo %INFO% Installing backend dependencies...
 cd backend
 
-poetry check >nul 2>&1
+poetry run python -c "import uvicorn; import fastapi" >nul 2>&1
 if %errorlevel% equ 0 (
     echo %SUCCESS% Backend dependencies already installed!
 ) else (
@@ -117,7 +129,15 @@ if %errorlevel% equ 0 (
         pause
         exit /b 1
     )
-    echo %SUCCESS% Backend dependencies installed!
+    poetry run python -c "import uvicorn; import fastapi" >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo %SUCCESS% Backend dependencies installed!
+    ) else (
+        echo %ERROR% Failed to install backend dependencies properly
+        echo %ERROR% Try running: cd backend && poetry install --sync
+        pause
+        exit /b 1
+    )
 )
 
 cd ..
@@ -148,11 +168,22 @@ echo.
 
 REM Start backend
 echo %INFO% Launching backend server...
-cd backend
-start /b poetry run uvicorn main:app --reload
+REM Run from project root to ensure proper Python imports
 cd ..
+start /b poetry run uvicorn app.backend.main:app --reload --host 127.0.0.1 --port 8000
+cd app
 
 timeout /t 3 /nobreak >nul
+
+REM Check database initialization
+echo %INFO% Checking database initialization...
+timeout /t 2 /nobreak >nul
+
+if exist "..\hedge_fund.db" (
+    echo %SUCCESS% Database initialized successfully!
+) else (
+    echo %WARNING% Database file not found, but will be created on first API call
+)
 
 REM Start frontend
 echo %INFO% Launching frontend development server...
@@ -171,6 +202,7 @@ echo %SUCCESS% AI Hedge Fund web application is now running!
 echo %INFO% Frontend: http://localhost:5173
 echo %INFO% Backend:  http://localhost:8000
 echo %INFO% Docs:     http://localhost:8000/docs
+echo %INFO% Database: SQLite (hedge_fund.db in project root)
 echo.
 echo %INFO% Press any key to stop both services...
 pause >nul
